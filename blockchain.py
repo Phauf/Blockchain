@@ -7,20 +7,39 @@ from uuid import uuid4
 import requests
 from flask import Flask, jsonify, request
 
-class Blockchain():
+
+class Blockchain:
     def __init__(self):
-        self.chain = []
         self.current_transactions = []
+        self.chain = []
         self.nodes = set()
 
-        #Create the gemesis blockk
+        # Create the genesis block
         self.new_block(previous_hash='1', proof=100)
 
     def register_node(self, address):
-        parsed_urlparse(address)
-        self.nodes.add(parsed_url.netloc)
+        """
+        Add a new node to the list of nodes
+        :param address: Address of node. Eg. 'http://192.168.0.5:5000'
+        """
+
+        parsed_url = urlparse(address)
+        if parsed_url.netloc:
+            self.nodes.add(parsed_url.netloc)
+        elif parsed_url.path:
+            # Accepts an URL without scheme like '192.168.0.5:5000'.
+            self.nodes.add(parsed_url.path)
+        else:
+            raise ValueError('Invalid URL')
+
 
     def valid_chain(self, chain):
+        """
+        Determine if a given blockchain is valid
+        :param chain: A blockchain
+        :return: True if valid, False if not
+        """
+
         last_block = chain[0]
         current_index = 1
 
@@ -42,7 +61,7 @@ class Blockchain():
             current_index += 1
 
         return True
-    
+
     def resolve_conflicts(self):
         """
         This is our consensus algorithm, it resolves conflicts
@@ -79,20 +98,20 @@ class Blockchain():
     def new_block(self, proof, previous_hash):
         """
         Create a new Block in the Blockchain
-        :param proof: <int> The proof given by the Proof of Work algorithm
-        :param previous_hash: (Optional) <str> Hash of previous Block
-        :return: <dict> New Block
+        :param proof: The proof given by the Proof of Work algorithm
+        :param previous_hash: Hash of previous Block
+        :return: New Block
         """
 
         block = {
-            'index' : len(self.chain) + 1,
-            'timestamp' : time(),
-            'transactions' : self.current_transactions,
-            'proof' : proof,
-            'previous_hash' : previous_hash or self.hash(self.chain[-1]),
+            'index': len(self.chain) + 1,
+            'timestamp': time(),
+            'transactions': self.current_transactions,
+            'proof': proof,
+            'previous_hash': previous_hash or self.hash(self.chain[-1]),
         }
-        
-        #reset teh ccurrent list of transactions
+
+        # Reset the current list of transactions
         self.current_transactions = []
 
         self.chain.append(block)
@@ -101,12 +120,11 @@ class Blockchain():
     def new_transaction(self, sender, recipient, amount):
         """
         Creates a new transaction to go into the next mined Block
-        :param sender: <str> Address of the Sender
-        :param recipient: <str> Address of the Recipient
-        :param amount: <int> Amount
-        :return: <int> The index of the Block that will hold this transaction
+        :param sender: Address of the Sender
+        :param recipient: Address of the Recipient
+        :param amount: Amount
+        :return: The index of the Block that will hold this transaction
         """
-
         self.current_transactions.append({
             'sender': sender,
             'recipient': recipient,
@@ -115,21 +133,31 @@ class Blockchain():
 
         return self.last_block['index'] + 1
 
+    @property
+    def last_block(self):
+        return self.chain[-1]
+
     @staticmethod
     def hash(block):
-        """Creates a SHA-256 hash of a Block
-        :param block: <dict> Block
-        :return: <str>"""
+        """
+        Creates a SHA-256 hash of a Block
+        :param block: Block
+        """
+
         # We must make sure that the Dictionary is Ordered, or we'll have inconsistent hashes
         block_string = json.dumps(block, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
-    @property
-    def last_block(self):
-        #this returns the last block in the chain
-        return self.chain[-1]
+    def proof_of_work(self, last_block):
+        """
+        Simple Proof of Work Algorithm:
+         - Find a number p' such that hash(pp') contains leading 4 zeroes
+         - Where p is the previous proof, and p' is the new proof
+         
+        :param last_block: <dict> last Block
+        :return: <int>
+        """
 
-    def proof_of_work(self, last_proof):
         last_proof = last_block['proof']
         last_hash = self.hash(last_block)
 
@@ -141,22 +169,32 @@ class Blockchain():
 
     @staticmethod
     def valid_proof(last_proof, proof, last_hash):
+        """
+        Validates the Proof
+        :param last_proof: <int> Previous Proof
+        :param proof: <int> Current Proof
+        :param last_hash: <str> The hash of the Previous Block
+        :return: <bool> True if correct, False if not.
+        """
+
         guess = f'{last_proof}{proof}{last_hash}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == "0000"
 
-#Instantiate our Node
+
+# Instantiate the Node
 app = Flask(__name__)
 
-#Generate a globally unique address for this node
-node_identifier = str(uuid4()).replace('-','')  #creates a random name for the node
+# Generate a globally unique address for this node
+node_identifier = str(uuid4()).replace('-', '')
 
-#Instantiate the blockchain
+# Instantiate the Blockchain
 blockchain = Blockchain()
+
 
 @app.route('/mine', methods=['GET'])
 def mine():
-# We run the proof of work algorithm to get the next proof...
+    # We run the proof of work algorithm to get the next proof...
     last_block = blockchain.last_block
     proof = blockchain.proof_of_work(last_block)
 
@@ -181,15 +219,16 @@ def mine():
     }
     return jsonify(response), 200
 
-@app.route('/transactions/new', methods= ['POST'])
+
+@app.route('/transactions/new', methods=['POST'])
 def new_transaction():
     values = request.get_json()
-        
+
     # Check that the required fields are in the POST'ed data
     required = ['sender', 'recipient', 'amount']
     if not all(k in values for k in required):
         return 'Missing values', 400
-        
+
     # Create a new Transaction
     index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
 
@@ -200,10 +239,11 @@ def new_transaction():
 @app.route('/chain', methods=['GET'])
 def full_chain():
     response = {
-        'chain' : blockchain.chain,
-        'length' : len(blockchain.chain),
+        'chain': blockchain.chain,
+        'length': len(blockchain.chain),
     }
     return jsonify(response), 200
+
 
 @app.route('/nodes/register', methods=['POST'])
 def register_nodes():
@@ -211,16 +251,17 @@ def register_nodes():
 
     nodes = values.get('nodes')
     if nodes is None:
-        return "Error: supply list of nodeskgjd", 400
+        return "Error: Please supply a valid list of nodes", 400
 
     for node in nodes:
         blockchain.register_node(node)
 
     response = {
-        'message' : 'New nodes have been addedkfdfgcjkd',
+        'message': 'New nodes have been added',
         'total_nodes': list(blockchain.nodes),
     }
-    return jsonify(response),201
+    return jsonify(response), 201
+
 
 @app.route('/nodes/resolve', methods=['GET'])
 def consensus():
@@ -228,47 +269,24 @@ def consensus():
 
     if replaced:
         response = {
-            'message' :'our chain was replaced',
-            'new_chain' : blockchain.chain
+            'message': 'Our chain was replaced',
+            'new_chain': blockchain.chain
         }
     else:
         response = {
-            'message' : 'our chain is authoritative',
+            'message': 'Our chain is authoritative',
             'chain': blockchain.chain
         }
-        return jsonify(response), 200
+
+    return jsonify(response), 200
 
 
-    if __name__ == '__main__':
-        from argparse import ArgumentParser
+if __name__ == '__main__':
+    from argparse import ArgumentParser
 
-        parser = ArgumentParser()
-        parser.add_argument('-p', '--port', default=5000, type=int, help='port to listen on')
-        args = parser.parse_args()
-        port = args.port
-        app.run(host='0.0.0.0', port=5000)
+    parser = ArgumentParser()
+    parser.add_argument('-p', '--port', default=5000, type=int, help='port to listen on')
+    args = parser.parse_args()
+    port = args.port
 
-
-        
-
-
-
-
-
-
-
-
-    #this is what a blockchain looks like
-#    block = {
-#    'index': 1,
-#    'timestamp': 1506057125.900785,
-#    'transactions': [
-#        {
-#            'sender': "8527147fe1f5426f9dd545de4b27ee00",
-#            'recipient': "a77f5cdfa2934df3954a5c7c7da5df1f",
-#            'amount': 5,
-#        }
-#    ],
-#    'proof': 324984774000,
-#    'previous_hash': "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-#}
+    app.run(host='0.0.0.0', port=port)
